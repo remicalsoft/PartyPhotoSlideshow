@@ -40,8 +40,8 @@
     <!-- 追加画像サムネイル用オーバーレイ -->
     <ImageView
         android:id="@+id/thumbOverlay"
-        android:layout_width="160dp"
-        android:layout_height="160dp"
+        android:layout_width="320dp"
+        android:layout_height="320dp"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="54dp"

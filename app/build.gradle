@@ -41,7 +41,12 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.5.1'
     implementation 'com.google.android.material:material:1.7.0'
 
-    // Dropbox Core SDK
+    implementation 'androidx.security:security-crypto:1.1.0-alpha03'
+
+
+    // Dropbox Core SDK (OAuth, PKCE)
+    implementation 'com.dropbox.core:dropbox-core-sdk:7.0.0'
+    // Dropbox Android SDK
     implementation 'com.dropbox.core:dropbox-android-sdk:7.0.0'
 
     // Glide (画像読み込み)
