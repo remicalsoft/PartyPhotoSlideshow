@@ -8,4 +8,8 @@
     <string name="dropbox_folder_path">/ファイル リクエスト/パーティースライドショー</string>
     <!-- Dropbox クライアント識別子 -->
     <string name="dropbox_client_identifier">PartySlideshowApp/1.0</string>
+    <string name="downloading_images">画像をダウンロードしています...</string>
+    <string name="photo_count_format">%d photos</string>
+    <string name="progress_format">%d / %d</string>
+    <string name="new_photo_notification">✨ 新しい写真が投稿されました！</string>
 </resources>
