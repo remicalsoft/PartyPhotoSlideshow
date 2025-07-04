@@ -1,111 +1,132 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@android:color/black"
+    tools:context=".MainActivity">
 
-    <ImageView
-        android:id="@+id/backgroundImageView1"
+    <!-- 背景用のImageViewを重ねるためのFrameLayout -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:visibility="visible" />
+        android:layout_height="match_parent">
 
-    <ImageView
-        android:id="@+id/backgroundImageView2"
+        <!-- 背景用のぼかした画像1 -->
+        <ImageView
+            android:id="@+id/backgroundImageView1"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:alpha="1.0"
+            android:contentDescription="Background Image" />
+
+        <!-- 背景用のぼかした画像2 -->
+        <ImageView
+            android:id="@+id/backgroundImageView2"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:alpha="0.0"
+            android:contentDescription="Background Image" />
+    </FrameLayout>
+
+
+    <!-- スライドショー用のImageViewを重ねるためのFrameLayout -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:visibility="invisible" />
+        android:layout_height="match_parent">
 
-    <ImageView
-        android:id="@+id/imageView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:adjustViewBounds="true"
-        android:scaleType="fitCenter" />
+        <!-- スライドショーのメイン画像1 -->
+        <ImageView
+            android:id="@+id/slideshowImageView1"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:alpha="1.0"
+            android:contentDescription="Slideshow Image" />
 
-    <ImageView
-        android:id="@+id/imageView2"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:adjustViewBounds="true"
-        android:scaleType="fitCenter"
-        android:visibility="invisible" />
+        <!-- スライドショーのメイン画像2 -->
+        <ImageView
+            android:id="@+id/slideshowImageView2"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:alpha="0.0"
+            android:contentDescription="Slideshow Image" />
 
+    </FrameLayout>
+
+    <!-- 画像カウンター ("2 / 10" のような表示) -->
+    <TextView
+        android:id="@+id/counterTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:background="#80000000"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp"
+        android:textColor="@android:color/white"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        tools:text="1 / 10"
+        tools:visibility="visible" />
+
+    <!-- 新しい写真のサムネイル表示用ImageView -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/thumbnailCardView"
+        android:layout_width="256dp"
+        android:layout_height="256dp"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:visibility="gone"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="8dp"
+        tools:visibility="visible">
+
+        <ImageView
+            android:id="@+id/thumbnailImageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:contentDescription="New Photo Thumbnail" />
+
+    </androidx.cardview.widget.CardView>
+
+    <!-- ダウンロード進捗表示用のビューグループ -->
     <LinearLayout
-        android:id="@+id/progressOverlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#CC000000"
-        android:gravity="center"
+        android:id="@+id/progressLayout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
         android:orientation="vertical"
-        android:visibility="gone">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
-            android:text="写真を読み込んでいます..."
-            android:textColor="#FFFFFF"
-            android:textSize="18sp" />
+        android:gravity="center"
+        android:background="#A0000000"
+        android:padding="24dp"
+        android:elevation="10dp"
+        android:visibility="gone"
+        tools:visibility="visible">
 
         <ProgressBar
             android:id="@+id/progressBar"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="280dp"
-            android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="0"
-            android:progressBackgroundTint="#333333"
-            android:progressTint="#4ECDC4" />
+            style="?android:attr/progressBarStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
 
         <TextView
-            android:id="@+id/tvProgress"
+            android:id="@+id/progressTextView"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="0 / 0"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+            android:layout_marginTop="8dp"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            tools:text="キャッシュを同期中... (5/20)" />
     </LinearLayout>
 
-    <ImageView
-        android:id="@+id/thumbOverlay"
-        android:layout_width="240dp"
-        android:layout_height="240dp"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="24dp"
-        android:layout_marginBottom="80dp"
-        android:elevation="12dp"
-        android:scaleType="centerCrop"
-        android:visibility="gone" />
-
-    <LinearLayout
-        android:id="@+id/infoOverlay"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|start"
-        android:layout_margin="24dp"
-        android:background="#66000000"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:visibility="visible">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="🎉 "
-            android:textSize="20sp" />
-
-        <TextView
-            android:id="@+id/tvPhotoCount"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="0 photos"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
-    </LinearLayout>
-
-</FrameLayout>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

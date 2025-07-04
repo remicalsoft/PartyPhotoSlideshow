@@ -1,500 +1,471 @@
 package net.dixq.partyphotoslideshow
 
-import android.animation.*
-import android.content.Intent
-import android.graphics.drawable.Drawable
-import android.os.*
+import android.graphics.Bitmap
+import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.view.animation.AccelerateDecelerateInterpolator
-// import android.view.animation.OvershootInterpolator // Snackbar アニメーションで使われていなければ不要
-import android.widget.ImageView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.MultiTransformation
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.load.resource.bitmap.CenterCrop
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
-import com.dropbox.core.DbxHost
+import com.bumptech.glide.request.RequestOptions
+import com.dropbox.core.DbxException
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.android.Auth
-import com.dropbox.core.oauth.DbxCredential
 import com.dropbox.core.v2.DbxClientV2
+import com.dropbox.core.v2.files.DeletedMetadata
 import com.dropbox.core.v2.files.FileMetadata
+import com.dropbox.core.v2.files.ListFolderContinueErrorException
 import com.google.android.material.snackbar.Snackbar
 import jp.wasabeef.glide.transformations.BlurTransformation
 import kotlinx.coroutines.*
 import net.dixq.partyphotoslideshow.databinding.ActivityMainBinding
 import java.io.File
 import java.io.FileOutputStream
-import java.util.Locale
-import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.coroutines.coroutineContext
-// import kotlin.random.Random // Random を使わなくなったので不要なら削除
+import java.util.Collections
 
 class MainActivity : AppCompatActivity() {
 
-    /* ───────── フィールド ───────── */
+    // --- ビューバインディングとクラス変数 ---
     private lateinit var binding: ActivityMainBinding
-    private lateinit var dbxClient: DbxClientV2
-    // private lateinit var particleView: ParticleView // ParticleView 削除
+    private var dbxClient: DbxClientV2? = null // Dropbox APIクライアント
+    private var imagePaths = Collections.synchronizedList(mutableListOf<String>()) // 表示する画像のファイル名リスト（スレッドセーフ）
+    private var currentImageIndex = 0 // 現在表示している画像のインデックス
+    private var folderCursor: String? = null // Dropboxフォルダの変更を追跡するためのカーソル
 
-    private lateinit var backgroundImageView1: ImageView
-    private lateinit var backgroundImageView2: ImageView
-    private var isBackground1Active = true
-    private var currentBackgroundAnimatorSet: AnimatorSet? = null
+    // --- ジョブ管理 ---
+    private var slideshowJob: Job? = null // スライドショージョブ
+    private var longpollJob: Job? = null // Dropboxの変更を監視するジョブ
 
-    private val idToFile = mutableMapOf<String, File>()
-    private val imageFiles = CopyOnWriteArrayList<File>()
-    private var currentIndex = 0
+    // --- クロスフェード用フラグ ---
+    private var isImageView1Active = true // メイン画像のImageView1が現在表示中か
+    private var isBackgroundView1Active = true // 背景画像のImageView1が現在表示中か
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var currentAnimatorSet: AnimatorSet? = null
-
-    private lateinit var dropboxFolderPath: String
-    private lateinit var photoDir: File
-
-    private var isAppStarted = false
-    private var watchJob: Job? = null
-
-    private val TAG = "PartySlideshow"
-
-    private val finalNameRegex =
-        Regex(""".+\s-\s.+\.(jpg|jpeg|png)""", RegexOption.IGNORE_CASE)
-
-    private val scopes = arrayOf(
-        "files.metadata.read",
-        "files.content.read",
-        "files.content.write"
-    )
-
-    // TransitionType enum 削除
-
-    private val slideRunnable = object : Runnable {
-        override fun run() {
-            if (!isDestroyed && imageFiles.isNotEmpty()) {
-                showNextImage()
-            }
-            handler.postDelayed(this, 6_000L)
-        }
+    // --- 定数 ---
+    companion object {
+        private const val TAG = "MainActivity" // ログ用タグ
+        private const val SLIDESHOW_INTERVAL_MS = 5000L // スライドショーの切り替え間隔
+        private const val THUMBNAIL_DISPLAY_DURATION_MS = 8000L // 新着サムネイルの表示時間
+        private const val FADE_DURATION_MS = 600L // クロスフェードアニメーションの時間
+        private const val SNACKBAR_TEXT_SIZE_SP = 24f // Snackbarの文字サイズ
     }
 
-    /* ───────── lifecycle ───────── */
+    // --- ライフサイクルメソッド ---
     override fun onCreate(savedInstanceState: Bundle?) {
-        WindowCompat.setDecorFitsSystemWindows(window, false) // ★ これを super.onCreate の直後、setContentView の前に
-
         super.onCreate(savedInstanceState)
-
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        backgroundImageView1 = binding.backgroundImageView1
-        backgroundImageView2 = binding.backgroundImageView2
-        backgroundImageView2.alpha = 0f
-
-        // ★ WindowInsetsControllerCompat を使ったフルスクリーン設定
-        val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
-        // システムバー（ステータスバーとナビゲーションバー）を隠す
-        windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
-        // スワイプで一時的に表示する際の挙動を設定
-        windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility =
-            View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-
-        dropboxFolderPath = getString(R.string.dropbox_folder_path)
-        photoDir = File(externalCacheDir, "photos").apply { if (!exists()) mkdirs() }
-
-        photoDir.listFiles()?.forEach { imageFiles += it }
-        binding.tvPhotoCount.text = getString(R.string.photo_count_format, imageFiles.size)
-
-
-        binding.imageView2.visibility = View.INVISIBLE
-
-        loadCredential()?.let {
-            setupClient(it); startApp()
-        } ?: startOAuth()
+        // 全画面表示（ステータスバーやナビゲーションバーを隠す）
+        window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN)
     }
 
     override fun onResume() {
         super.onResume()
-        Auth.getDbxCredential()?.let {
-            storeCredential(it)
-            if (!isAppStarted) { setupClient(it); startApp() }
+        // Dropboxの認証トークンを確認
+        val storedToken = getAndStoreAccessToken()
+        if (storedToken == null) {
+            // トークンがなければ認証画面を開始
+            Auth.startOAuth2Authentication(this, getString(R.string.dropbox_app_key))
+            return
         }
-        // particleView.resume() // ParticleView 削除
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        Auth.getDbxCredential()?.let {
-            storeCredential(it)
-            if (!isAppStarted) { setupClient(it); startApp() }
+        // Dropboxクライアントを初期化
+        if (dbxClient == null) {
+            val requestConfig = DbxRequestConfig.newBuilder("PartyPhotoSlideshow").build()
+            dbxClient = DbxClientV2(requestConfig, storedToken)
+            Log.d(TAG, "Dropbox client initialized.")
+        }
+        // アプリ起動時のキャッシュ同期処理を開始
+        lifecycleScope.launch {
+            syncLocalCache()
         }
     }
 
     override fun onPause() {
         super.onPause()
-        handler.removeCallbacks(slideRunnable)
-        currentAnimatorSet?.cancel()
-        currentBackgroundAnimatorSet?.cancel()
-        watchJob?.cancel()
-        // particleView.pause() // ParticleView 削除
+        // アプリが非表示になったら、すべてのバックグラウンド処理を停止
+        stopPollingAndSlideshow()
     }
 
-    /* ───────── 認可/初期化 ───────── */
-    private fun startOAuth() {
-        val cfg = DbxRequestConfig
-            .newBuilder(getString(R.string.dropbox_client_identifier))
-            .withUserLocale(Locale.getDefault().toString())
-            .build()
-
-        Auth.startOAuth2PKCE(
-            this,
-            getString(R.string.dropbox_app_key),
-            cfg,
-            DbxHost.DEFAULT,
-            scopes.toList()
-        )
-    }
-
-    private fun setupClient(cred: DbxCredential) {
-        val cfg = DbxRequestConfig
-            .newBuilder(getString(R.string.dropbox_client_identifier))
-            .withUserLocale(Locale.getDefault().toString())
-            .build()
-        dbxClient = DbxClientV2(cfg, cred)
-    }
-
-    private fun startApp() {
-        isAppStarted = true
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-        scope.launch { initialDownload() }
-
-        if (imageFiles.isNotEmpty()) {
-            Glide.with(this)
-                .load(imageFiles[0])
-                .into(binding.imageView)
-            currentIndex = 1
-
-            Glide.with(this@MainActivity)
-                .load(imageFiles[0])
-                .transform(MultiTransformation(CenterCrop(), BlurTransformation(25, 3)))
-                .into(backgroundImageView1)
-            backgroundImageView1.alpha = 1f
-            isBackground1Active = true
+    // --- Dropbox認証 ---
+    /**
+     * SharedPreferencesからアクセストークンを取得。
+     * 認証画面からのリダイレクトであれば、新しいトークンを保存する。
+     */
+    private fun getAndStoreAccessToken(): String? {
+        val prefs = getSharedPreferences("dropbox-prefs", MODE_PRIVATE)
+        var accessToken = prefs.getString("access-token", null)
+        Auth.getDbxCredential()?.let {
+            accessToken = it.accessToken
+            prefs.edit().putString("access-token", accessToken).apply()
+            Log.d(TAG, "New access token stored.")
         }
-
-        handler.post(slideRunnable)
-        watchJob = scope.launch { watchLongpoll() }
+        return accessToken
     }
 
-    /* ───────── 画像切替とトランジション ───────── */
-    private fun showNextImage() {
-        if (imageFiles.isEmpty()) return
-
-        // val transitionType = TransitionType.values().random() // TransitionType 削除のため不要
-        val nextImageFile = imageFiles[currentIndex]
-
-        val currentForeImageView: ImageView
-        val nextForeImageView: ImageView
-
-        if (binding.imageView.visibility == View.VISIBLE) {
-            currentForeImageView = binding.imageView
-            nextForeImageView = binding.imageView2
-        } else {
-            currentForeImageView = binding.imageView2
-            nextForeImageView = binding.imageView
-        }
-
-        Glide.with(this)
-            .load(nextImageFile)
-            .listener(object : RequestListener<Drawable> {
-                override fun onLoadFailed(
-                    e: GlideException?, model: Any?,
-                    target: Target<Drawable>?,
-                    isFirstResource: Boolean
-                ): Boolean {
-                    Log.e(TAG, "Foreground image load failed for: ${nextImageFile.path}", e)
-                    return false
-                }
-
-                override fun onResourceReady(
-                    resource: Drawable?, model: Any?,
-                    target: Target<Drawable>?,
-                    dataSource: DataSource?, isFirstResource: Boolean
-                ): Boolean {
-                    performTransition(currentForeImageView, nextForeImageView) // transitionType 引数削除
-
-                    val currentBgImageView = if (isBackground1Active) backgroundImageView1 else backgroundImageView2
-                    val nextBgImageView = if (isBackground1Active) backgroundImageView2 else backgroundImageView1
-
-                    Glide.with(this@MainActivity)
-                        .load(nextImageFile)
-                        .transform(MultiTransformation(CenterCrop(), BlurTransformation(25, 3)))
-                        .listener(object : RequestListener<Drawable> {
-                            override fun onLoadFailed(e: GlideException?, modelBg: Any?, targetBg: Target<Drawable>?, isFirstResourceBg: Boolean): Boolean {
-                                Log.e(TAG, "Background image load failed for: ${nextImageFile.path}", e)
-                                nextBgImageView.alpha = 0f
-                                return false
-                            }
-
-                            override fun onResourceReady(
-                                resourceBg: Drawable?, modelBg: Any?,
-                                targetBg: Target<Drawable>?, dataSourceBg: DataSource?,
-                                isFirstResourceBg: Boolean
-                            ): Boolean {
-                                performBackgroundCrossfade(currentBgImageView, nextBgImageView)
-                                return false
-                            }
-                        })
-                        .into(nextBgImageView)
-                    return false
-                }
-            })
-            .into(nextForeImageView)
-
-        currentIndex = (currentIndex + 1) % imageFiles.size
-    }
-
-    private fun performBackgroundCrossfade(currentBgView: ImageView, nextBgView: ImageView) {
-        currentBackgroundAnimatorSet?.cancel()
-
-        nextBgView.alpha = 0f
-        if (nextBgView.visibility == View.INVISIBLE) {
-            nextBgView.visibility = View.VISIBLE
-        }
-
-        val animatorSet = AnimatorSet()
-        animatorSet.playTogether(
-            ObjectAnimator.ofFloat(currentBgView, "alpha", 1f, 0f),
-            ObjectAnimator.ofFloat(nextBgView, "alpha", 0f, 1f)
-        )
-        animatorSet.duration = 1500L
-        animatorSet.interpolator = AccelerateDecelerateInterpolator()
-
-        animatorSet.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator) {
-                currentBgView.visibility = View.INVISIBLE
-                isBackground1Active = (nextBgView == backgroundImageView1)
-                currentBackgroundAnimatorSet = null
-            }
-            override fun onAnimationCancel(animation: Animator) {
-                currentBackgroundAnimatorSet = null
-            }
-        })
-        currentBackgroundAnimatorSet = animatorSet
-        animatorSet.start()
-    }
-
-    // performTransition を FADE 専用に簡略化
-    private fun performTransition(
-        currentView: ImageView,
-        nextView: ImageView
-    ) {
-        currentAnimatorSet?.cancel()
-
-        val animatorSet = AnimatorSet()
-        val defaultDuration = 1500L
-
-        nextView.alpha = 0f
-        nextView.visibility = View.VISIBLE
-        animatorSet.playTogether(
-            ObjectAnimator.ofFloat(currentView, "alpha", 1f, 0f),
-            ObjectAnimator.ofFloat(nextView, "alpha", 0f, 1f)
-        )
-        animatorSet.duration = defaultDuration
-        animatorSet.interpolator = AccelerateDecelerateInterpolator()
-
-        animatorSet.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator) {
-                currentView.visibility = View.INVISIBLE
-                currentView.apply { // リセットは残しておいても良い
-                    alpha = 1f
-                    scaleX = 1f
-                    scaleY = 1f
-                    translationX = 0f
-                    translationY = 0f
-                    rotation = 0f
-                    rotationX = 0f
-                    rotationY = 0f
-                }
-            }
-        })
-
-        currentAnimatorSet = animatorSet
-        animatorSet.start()
-    }
-
-    /* ───────── 初回 DL ───────── */
-    private suspend fun initialDownload() {
-        val entries = dbxClient.files()
-            .listFolder(dropboxFolderPath)
-            .entries.filterIsInstance<FileMetadata>()
-            .filter { finalNameRegex.matches(it.name) }
-
-        Log.e(TAG, "size = "+entries.size);
+    // --- キャッシュ同期 ---
+    /**
+     * 起動時にローカルキャッシュとDropbox上のファイルを比較し、同期する。
+     */
+    private suspend fun syncLocalCache() {
         withContext(Dispatchers.Main) {
-            binding.progressOverlay.visibility = View.VISIBLE
-            binding.progressBar.max = entries.size
-            binding.tvProgress.text = getString(R.string.progress_format, 0, entries.size)
+            // 進捗表示UIを表示
+            binding.progressLayout.visibility = View.VISIBLE
+            binding.progressTextView.text = "ファイルリストを取得中..."
         }
 
-        entries.forEachIndexed { idx, meta ->
-            if (idToFile[meta.id] == null) downloadAndAdd(meta)
-            withContext(Dispatchers.Main) {
-                binding.progressBar.progress = idx + 1
-                binding.tvProgress.text = getString(R.string.progress_format, idx + 1, entries.size)
-            }
-        }
-
-        withContext(Dispatchers.Main) {
-            binding.progressOverlay.visibility = View.GONE
-            binding.tvPhotoCount.text = getString(R.string.photo_count_format, imageFiles.size)
-
-
-            if (imageFiles.isNotEmpty() && binding.imageView.drawable == null) {
-                Glide.with(this@MainActivity)
-                    .load(imageFiles[0])
-                    .into(binding.imageView)
-                currentIndex = 1
-
-                Glide.with(this@MainActivity)
-                    .load(imageFiles[0])
-                    .transform(MultiTransformation(CenterCrop(), BlurTransformation(25, 3)))
-                    .into(backgroundImageView1)
-                backgroundImageView1.alpha = 1f
-                backgroundImageView2.alpha = 0f
-                backgroundImageView2.visibility = View.INVISIBLE
-                isBackground1Active = true
-            }
-            if (handler.hasCallbacks(slideRunnable).not() && imageFiles.isNotEmpty()) {
-                handler.post(slideRunnable)
-            }
-        }
-    }
-
-    /* ───────── Long-poll 監視 ───────── */
-    private suspend fun watchLongpoll() {
-        var cursor = dbxClient.files()
-            .listFolderGetLatestCursor(dropboxFolderPath).cursor
-
-        while (coroutineContext.isActive) {
+        withContext(Dispatchers.IO) {
             try {
-                val res = dbxClient.files().listFolderLongpoll(cursor, 480)
-                if (res.changes) {
-                    val delta = dbxClient.files().listFolderContinue(cursor)
-                    cursor = delta.cursor
-                    delta.entries
-                        .filterIsInstance<FileMetadata>()
-                        .filter { finalNameRegex.matches(it.name) }
-                        .forEach { if (idToFile[it.id] == null) handleNewFile(it) }
+                // Dropbox上の全ファイルリストを取得
+                val folderPath = getString(R.string.dropbox_folder_path)
+                val remoteResult = dbxClient!!.files().listFolder(folderPath)
+                folderCursor = remoteResult.cursor // 変更監視のためのカーソルを保存
+                val remoteFiles = remoteResult.entries
+                    .mapNotNull { it as? FileMetadata }
+                    .filterNot { it.name.matches(Regex(".* \\(\\d+\\)\\.jpg$")) } // 重複ファイル(...(1).jpgなど)を無視
+
+                val remoteFileNames = remoteFiles.map { it.name }.toSet()
+
+                // ローカルキャッシュのファイルリストを取得
+                val cacheDir = externalCacheDir ?: return@withContext
+                val localFiles = cacheDir.listFiles { _, name -> name.endsWith(".jpg") } ?: emptyArray()
+                val localFileNames = localFiles.map { it.name }.toSet()
+
+                // 1. ローカルにのみ存在するファイル（Dropboxから削除されたファイル）をキャッシュから削除
+                val filesToDelete = localFileNames - remoteFileNames
+                filesToDelete.forEach { fileName ->
+                    File(cacheDir, fileName).delete()
+                    Log.d(TAG, "Cache deleted: $fileName")
+                    withContext(Dispatchers.Main) {
+                        showCustomSnackbar("$fileName を削除しました")
+                    }
                 }
-                res.backoff?.let { delay(it * 1_000L) }
-            } catch (e: Exception) {
-                Log.w(TAG, "longpoll error", e); delay(1_000L)
-            }
-        }
-    }
 
-    /* ───────── ファイル処理 ───────── */
-    private suspend fun handleNewFile(meta: FileMetadata) {
-        downloadAndAdd(meta)
-        withContext(Dispatchers.Main) {
-            // particleView.createBurst(...) // ParticleView 削除
-
-            Snackbar.make(binding.root,
-                getString(R.string.new_photo_notification),
-                Snackbar.LENGTH_LONG).show()
-
-            binding.thumbOverlay.visibility = View.VISIBLE
-            binding.thumbOverlay.alpha = 0f
-            binding.thumbOverlay.scaleX = 0.5f
-            binding.thumbOverlay.scaleY = 0.5f
-
-            Glide.with(this@MainActivity).load(idToFile[meta.id]).into(binding.thumbOverlay)
-
-            val thumbAnimator = AnimatorSet().apply {
-                playTogether(
-                    ObjectAnimator.ofFloat(binding.thumbOverlay, "alpha", 0f, 1f),
-                    ObjectAnimator.ofFloat(binding.thumbOverlay, "scaleX", 0.5f, 1f),
-                    ObjectAnimator.ofFloat(binding.thumbOverlay, "scaleY", 0.5f, 1f)
-                )
-                duration = 500
-                // interpolator = OvershootInterpolator() // OvershootInterpolator が不要なら削除
-            }
-            thumbAnimator.start()
-
-            handler.postDelayed({
-                val hideAnimator = ObjectAnimator.ofFloat(binding.thumbOverlay, "alpha", 1f, 0f).apply {
-                    duration = 300
-                    addListener(object : AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: Animator) {
-                            binding.thumbOverlay.visibility = View.GONE
-                        }
-                    })
+                // 2. Dropboxにのみ存在するファイル（新しいファイル）をダウンロード
+                val filesToDownload = remoteFiles.filter { it.name !in localFileNames }
+                filesToDownload.forEachIndexed { index, fileMetadata ->
+                    withContext(Dispatchers.Main) {
+                        binding.progressTextView.text = "キャッシュを同期中... (${index + 1}/${filesToDownload.size})"
+                    }
+                    downloadFile(fileMetadata)
                 }
-                hideAnimator.start()
-            }, 4_000L)
 
-            if (imageFiles.size == 1 && binding.imageView.drawable == null) {
-                Glide.with(this@MainActivity)
-                    .load(imageFiles[0])
-                    .into(binding.imageView)
-                currentIndex = 1
+                // スライドショーで使うファイル名リストを更新
+                val finalFileNames = remoteFiles.map { it.name }.sorted()
+                synchronized(imagePaths) {
+                    imagePaths.clear()
+                    imagePaths.addAll(finalFileNames)
+                }
 
-                Glide.with(this@MainActivity)
-                    .load(imageFiles[0])
-                    .transform(MultiTransformation(CenterCrop(), BlurTransformation(25, 3)))
-                    .into(backgroundImageView1)
-                backgroundImageView1.alpha = 1f
-                isBackground1Active = true
+                // 同期完了後、UIを更新してスライドショーとリアルタイム監視を開始
+                withContext(Dispatchers.Main) {
+                    binding.progressLayout.visibility = View.GONE
+                    if (imagePaths.isNotEmpty()) {
+                        showNextImage(isInitialImage = true)
+                        startSlideshow()
+                    }
+                    startLongPollingForChanges()
+                }
 
-                if (handler.hasCallbacks(slideRunnable).not()) {
-                    handler.post(slideRunnable)
+            } catch (e: DbxException) {
+                Log.e(TAG, "Error during cache sync", e)
+                withContext(Dispatchers.Main) {
+                    binding.progressLayout.visibility = View.GONE
+                    showCustomSnackbar("キャッシュ同期エラー: ${e.message}")
                 }
             }
         }
     }
 
-    private fun downloadAndAdd(meta: FileMetadata) {
-        val fid = meta.id ?: return
-        val local = File(photoDir, meta.name)
+    /**
+     * 指定されたファイルをDropboxからダウンロードしてキャッシュに保存する。
+     */
+    private suspend fun downloadFile(fileMetadata: FileMetadata) {
+        val cacheDir = externalCacheDir ?: return
+        val file = File(cacheDir, fileMetadata.name)
         try {
-            dbxClient.files().download(meta.pathLower).inputStream.use { i ->
-                FileOutputStream(local).use { o -> i.copyTo(o) }
+            FileOutputStream(file).use { outputStream ->
+                dbxClient!!.files().download(fileMetadata.pathLower, fileMetadata.rev)
+                    .download(outputStream)
             }
-            idToFile[fid] = local
-            handler.post {
-                imageFiles.add(local)
-                binding.tvPhotoCount.text = getString(R.string.photo_count_format, imageFiles.size)
-            }
+            Log.d(TAG, "Cache downloaded: ${fileMetadata.name}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to download or save file: ${meta.name}", e)
-            // 必要であればエラーをユーザーに通知
+            Log.e(TAG, "Failed to download ${fileMetadata.name}", e)
         }
     }
 
-    /* ───────── Credential 永続化 ───────── */
-    private fun storeCredential(c: DbxCredential) =
-        getSharedPreferences("dropbox", MODE_PRIVATE).edit()
-            .putString("credential", c.toString()).apply()
+    // --- リアルタイム監視 (Long polling) ---
+    /**
+     * Dropboxフォルダの変更をリアルタイムで監視する処理を開始する。
+     */
+    private fun startLongPollingForChanges() {
+        if (longpollJob?.isActive == true) return
+        longpollJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    if (folderCursor == null) {
+                        Log.w(TAG, "Cursor is null, cannot longpoll. Retrying sync.")
+                        syncLocalCache() // カーソルがない場合、同期からやり直す
+                        continue
+                    }
+                    // 変更があるまで待機
+                    val longpollResult = dbxClient!!.files().listFolderLongpoll(folderCursor, 60L)
+                    if (longpollResult.changes) {
+                        // 変更があれば差分を取得
+                        fetchLatestChanges()
+                    }
+                } catch (e: DbxException) {
+                    Log.e(TAG, "Error during longpoll, resetting.", e)
+                    folderCursor = null // エラー時はカーソルをリセット
+                }
+            }
+        }
+    }
 
-    private fun loadCredential(): DbxCredential? =
-        getSharedPreferences("dropbox", MODE_PRIVATE)
-            .getString("credential", null)
-            ?.let { DbxCredential.Reader.readFully(it) }
+    /**
+     * 変更があった場合に、その差分（追加・削除）を取得して処理する。
+     */
+    private suspend fun fetchLatestChanges() {
+        try {
+            val result = dbxClient!!.files().listFolderContinue(folderCursor)
+            folderCursor = result.cursor // 次の監視のためにカーソルを更新
+
+            val allAddedMetadata = result.entries
+                .filterIsInstance<FileMetadata>()
+                .filterNot { it.name.matches(Regex(".* \\(\\d+\\)\\.jpg$")) } // 重複ファイルを無視
+
+            val deletedMetadataList = result.entries.filterIsInstance<DeletedMetadata>()
+
+            // Dropboxのファイルリクエストでは、一時ファイルが作られ、リネームされることがある。
+            // 最終的なファイル名（タイムスタンプで始まる）のみを「本当の追加」として扱う。
+            val finalAddedMetadata = allAddedMetadata.filter { it.name.matches(Regex("^\\d{8}_\\d{6}.*")) }
+
+            // ファイル追加と削除が同時に発生した場合（＝リネーム処理）、削除通知を抑制する。
+            val suppressDeleteNotification = finalAddedMetadata.isNotEmpty()
+
+            // 削除処理
+            deletedMetadataList.forEach { metadata ->
+                val fileName = File(metadata.pathLower).name
+                File(externalCacheDir, fileName).delete()
+                synchronized(imagePaths) {
+                    imagePaths.remove(fileName)
+                }
+                Log.d(TAG, "Dynamic cache deleted: $fileName")
+
+                if (!suppressDeleteNotification) {
+                    withContext(Dispatchers.Main) {
+                        showCustomSnackbar("$fileName を削除しました")
+                    }
+                }
+            }
+
+            // 追加処理 (一時ファイルも含むすべての追加ファイルをダウンロードし、リストに反映)
+            allAddedMetadata.forEach { metadata ->
+                downloadFile(metadata)
+                synchronized(imagePaths) {
+                    if (!imagePaths.contains(metadata.name)) {
+                        imagePaths.add(metadata.name)
+                    }
+                }
+            }
+
+            // 「本当の追加」があった場合のみ、通知とUI更新を行う
+            if (finalAddedMetadata.isNotEmpty()) {
+                val listWasEmpty = imagePaths.size == finalAddedMetadata.size
+
+                // リストをソート
+                synchronized(imagePaths) {
+                    imagePaths.sort()
+                }
+
+                withContext(Dispatchers.Main) {
+                    // 追加された最後のファイルについて通知を表示
+                    showNewPhotoNotification(finalAddedMetadata.last().name)
+                    // スライドショーが止まっていれば再開
+                    if (listWasEmpty) {
+                        showNextImage(isInitialImage = true)
+                        startSlideshow()
+                    }
+                }
+            }
+
+            withContext(Dispatchers.Main) { updateCounter() }
+
+        } catch (e: ListFolderContinueErrorException) {
+            if (e.errorValue.isReset) folderCursor = null
+        } catch (e: DbxException) {
+            Log.e(TAG, "Error fetching latest changes", e)
+        }
+    }
+
+
+    // --- スライドショー制御 ---
+    /**
+     * スライドショーを開始する。
+     */
+    private fun startSlideshow() {
+        if (slideshowJob?.isActive == true) return
+        slideshowJob = lifecycleScope.launch {
+            delay(SLIDESHOW_INTERVAL_MS)
+            while (isActive) {
+                showNextImage()
+                delay(SLIDESHOW_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * すべてのバックグラウンド処理（監視とスライドショー）を停止する。
+     */
+    private fun stopPollingAndSlideshow() {
+        longpollJob?.cancel()
+        slideshowJob?.cancel()
+    }
+
+    /**
+     * 次に表示する画像を決定し、読み込み処理を呼び出す。
+     */
+    private fun showNextImage(isInitialImage: Boolean = false) {
+        if (imagePaths.isEmpty()) {
+            // 表示する画像がなければ何もしない
+            return
+        }
+        if (!isInitialImage) {
+            // 初回表示でなければ、次の画像のインデックスに進める
+            currentImageIndex = (currentImageIndex + 1) % imagePaths.size
+        }
+        val fileName = imagePaths[currentImageIndex]
+        loadImageFromCache(fileName, isInitialImage)
+    }
+
+    /**
+     * キャッシュから画像を読み込み、クロスフェードで表示する。
+     */
+    private fun loadImageFromCache(fileName: String, isInitialImage: Boolean) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(externalCacheDir, fileName)
+                if (!file.exists()) return@launch
+
+                // Glideで画像をBitmapとしてプリロード
+                val bitmap: Bitmap = Glide.with(this@MainActivity).asBitmap().load(file).submit().get()
+
+                withContext(Dispatchers.Main) {
+                    // 現在表示中/非表示中のImageViewを特定
+                    val activeImageView = if (isImageView1Active) binding.slideshowImageView1 else binding.slideshowImageView2
+                    val inactiveImageView = if (isImageView1Active) binding.slideshowImageView2 else binding.slideshowImageView1
+                    val activeBackgroundView = if (isBackgroundView1Active) binding.backgroundImageView1 else binding.backgroundImageView2
+                    val inactiveBackgroundView = if (isBackgroundView1Active) binding.backgroundImageView2 else binding.backgroundImageView1
+
+                    // 非表示側のImageViewに次の画像をセット
+                    inactiveImageView.setImageBitmap(bitmap)
+                    Glide.with(this@MainActivity).load(bitmap).apply(RequestOptions.bitmapTransform(BlurTransformation(25, 3))).into(inactiveBackgroundView)
+
+                    if (isInitialImage) {
+                        // 初回表示はアニメーションなし
+                        activeImageView.setImageBitmap(bitmap)
+                        Glide.with(this@MainActivity).load(bitmap).apply(RequestOptions.bitmapTransform(BlurTransformation(25, 3))).into(activeBackgroundView)
+                        updateCounter()
+                        return@withContext
+                    }
+
+                    // クロスフェードアニメーション
+                    activeImageView.animate().alpha(0f).setDuration(FADE_DURATION_MS).start()
+                    inactiveImageView.animate().alpha(1f).setDuration(FADE_DURATION_MS).withEndAction {
+                        isImageView1Active = !isImageView1Active
+                        updateCounter() // アニメーション完了時にカウンターを更新
+                    }.start()
+
+                    activeBackgroundView.animate().alpha(0f).setDuration(FADE_DURATION_MS).start()
+                    inactiveBackgroundView.animate().alpha(1f).setDuration(FADE_DURATION_MS).withEndAction {
+                        isBackgroundView1Active = !isBackgroundView1Active
+                    }.start()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading image from cache: $fileName", e)
+            }
+        }
+    }
+
+    // --- UI更新ヘルパー ---
+    /**
+     * 画像カウンター (例: "3 / 10") の表示を更新する。
+     */
+    private fun updateCounter() {
+        if (imagePaths.isEmpty()) {
+            binding.counterTextView.visibility = View.GONE
+        } else {
+            binding.counterTextView.visibility = View.VISIBLE
+            binding.counterTextView.text = getString(R.string.image_counter_format, currentImageIndex + 1, imagePaths.size)
+        }
+    }
+
+    /**
+     * ファイル名から投稿者名を抽出する。
+     * "タイムスタンプ 名前.jpg" の形式に対応。
+     * @return 抽出した名前。命名規則に合わない場合はnull。
+     */
+    private fun parseUploaderName(fileName: String): String? {
+        // ファイル名が "YYYYMMDD_HHMMSS" のパターンで始まっているかチェック
+        if (!fileName.matches(Regex("^\\d{8}_\\d{6}.*"))) {
+            return null
+        }
+
+        val namePart = fileName.substringBeforeLast('.', fileName)
+        val firstSpaceIndex = namePart.indexOf(' ')
+
+        if (firstSpaceIndex != -1 && firstSpaceIndex < namePart.length - 1) {
+            return namePart.substring(firstSpaceIndex + 1).trim()
+        }
+
+        return null
+    }
+
+    /**
+     * 指定されたメッセージで、文字サイズの大きいSnackbarを表示する。
+     */
+    private fun showCustomSnackbar(message: String) {
+        val snackbar = Snackbar.make(binding.rootLayout, message, Snackbar.LENGTH_LONG)
+        val textView = snackbar.view.findViewById<TextView>(com.google.android.material.R.id.snackbar_text)
+        textView.textSize = SNACKBAR_TEXT_SIZE_SP
+        snackbar.show()
+    }
+
+    /**
+     * 新しい写真が追加された際の通知（Snackbarとサムネイル）を表示する。
+     */
+    private fun showNewPhotoNotification(fileName: String) {
+        val uploaderName = parseUploaderName(fileName)
+        val message = if (uploaderName != null) {
+            "$uploaderName さんが新しい画像を投稿しました！"
+        } else {
+            getString(R.string.notification_new_photo_added)
+        }
+        showCustomSnackbar(message)
+
+        lifecycleScope.launch {
+            try {
+                val file = File(externalCacheDir, fileName)
+                if (!file.exists()) return@launch
+
+                val bitmap: Bitmap = withContext(Dispatchers.IO) {
+                    Glide.with(this@MainActivity).asBitmap().load(file).submit().get()
+                }
+
+                binding.thumbnailImageView.setImageBitmap(bitmap)
+                binding.thumbnailCardView.alpha = 1f
+                binding.thumbnailCardView.visibility = View.VISIBLE
+
+                delay(THUMBNAIL_DISPLAY_DURATION_MS)
+
+                binding.thumbnailCardView.animate().alpha(0f).setDuration(500).withEndAction {
+                    binding.thumbnailCardView.visibility = View.GONE
+                }.start()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error showing thumbnail for $fileName", e)
+            }
+        }
+    }
 }
-
-// ParticleView クラス定義全体を削除
