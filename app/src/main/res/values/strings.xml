@@ -1,22 +1,28 @@
 <resources>
-    <string name="app_name">Party Photo Slideshow</string>
+    <string name="app_name">パーティースライドショー</string>
 
     <!-- Dropbox App Info -->
     <string name="dropbox_app_key">p5ww1xxlg3fln7j</string>
     <string name="dropbox_app_key_scheme">db-p5ww1xxlg3fln7j</string>
 
-    <!--
-      このリダイレクトURIは、AndroidManifest.xmlのAuthActivityのintent-filterで
-      使用するスキームと一致している必要があります。
-      書式: "db-<APP_KEY>://<ANY_HOST>/<ANY_PATH>"
-      今回は "db-p5ww1xxlg3fln7j://oauth2redirect" とします。
-    -->
-    <string name="dropbox_redirect_uri">db-p5ww1xxlg3fln7j://oauth2redirect</string>
-
-    <!-- ファイルリクエストで作成したフォルダパス -->
+    <!-- 固定のフォルダパスを定義 -->
     <string name="dropbox_folder_path">/ファイル リクエスト/パーティースライドショー</string>
 
     <!-- UI Texts -->
     <string name="notification_new_photo_added">新しい写真が追加されました</string>
     <string name="image_counter_format">%1$d / %2$d</string>
+
+    <!-- ★追加: 初回起動時の案内メッセージ -->
+    <string name="welcome_dialog_title">はじめに</string>
+    <string name="welcome_dialog_message">Dropboxアカウントでの認証が必要です。次の画面で、スライドショーに使用するDropboxアカウントでログインし、アクセスを許可してください。
+写真は「%1$s」フォルダから読み込まれます。このフォルダに写真を追加・削除すると自動的にスライドショーにも反映されます。</string>
+    <string name="ok">OK</string>
+
+    <!-- QR Code Feature Strings -->
+    <string name="settings">設定</string>
+    <string name="qr_code_image">QRコード画像</string>
+    <string name="enter_url_dialog_title">URLを入力</string>
+    <string name="enter_url_dialog_message">画像投稿用のURLを入力してください。QRコードにして表示します。</string>
+    <string name="url_input_hint">https://...</string>
+
 </resources>

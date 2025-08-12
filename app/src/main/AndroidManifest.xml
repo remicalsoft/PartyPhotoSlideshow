@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="net.dixq.partyphotoslideshow">
+    package="net.dixq.partyslideshow">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -10,7 +10,8 @@
     <application
         android:allowBackup="true"
         android:label="@string/app_name"
-        android:theme="@style/Theme.PartyPhotoSlideshow">
+        android:theme="@style/Theme.PartyPhotoSlideshow"
+        android:icon="@mipmap/ic_launcher">
 
         <!-- Dropbox OAuth2 PKCE 用 AuthActivity -->
         <activity
@@ -32,13 +33,18 @@
         </activity>
 
         <activity
-            android:name=".MainActivity"
-            android:launchMode="singleTask"
+            android:name="net.dixq.partyslideshow.AuthActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name="net.dixq.partyslideshow.MainActivity"
+            android:launchMode="singleTask"
+            android:exported="true">
         </activity>
     </application>
 </manifest>

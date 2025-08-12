@@ -129,4 +129,28 @@
             tools:text="キャッシュを同期中... (5/20)" />
     </LinearLayout>
 
+    <!-- 設定アイコン (歯車) -->
+    <ImageButton
+        android:id="@+id/settingsButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:src="@android:drawable/ic_menu_preferences"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/settings" />
+
+    <!-- QRコード表示用ImageView -->
+    <ImageView
+        android:id="@+id/qrCodeImageView"
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="16dp"
+        android:visibility="gone"
+        android:background="@android:color/white"
+        android:padding="8dp"
+        android:contentDescription="@string/qr_code_image"
+        tools:srcCompat="@tools:sample/avatars" /> <!-- サンプル画像表示用 (tools) -->
+
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
